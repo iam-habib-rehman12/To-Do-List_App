@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Advanced To‑Do — Habib</title>
+
+  <!-- Tailwind CDN (production build) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Alpine.js for reactivity -->
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <!-- Sortable for drag & drop ordering -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+
+  <!-- localForage for robust offline storage -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+
+  <!-- date-fns for date handling -->
+  <script src="https://cdn.jsdelivr.net/npm/date-fns@2.30.0/dist/date-fns.min.js"></script>
+
+  <!-- Chart.js for analytics -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    /* small custom styles beyond Tailwind */
+    .task-enter { transform: translateY(-6px) scale(.98); opacity: 0 }
+    .task-enter-active { transition: all .18s ease; transform: none; opacity: 1 }
+    .drag-handle { cursor: grab }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased" x-data="todoApp()" x-init="init()">
+
+  <!-- Top bar -->
+  <header class="max-w-5xl mx-auto p-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold">Advanced To‑Do</h1>
+      <p class="text-sm text-gray-500">Smart, offline-first tasks with analytics, drag-drop, filters and feedback.</p>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <button @click="toggleTheme()" class="px-3 py-1 rounded-md border">Toggle Theme</button>
+      <button @click="openStats = true" class="px-3 py-1 rounded-md bg-indigo-600 text-white">Analytics</button>
+      <a :href="feedbackUrl" target="_blank" rel="noopener" class="px-3 py-1 rounded-md bg-emerald-600 text-white">Give Feedback</a>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <main class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 p-4">
+
+    <!-- Left: create task & controls -->
+    <section class="md:col-span-1 bg-white p-4 rounded-lg shadow-sm">
+      <form @submit.prevent="addTask()" class="space-y-3">
+        <label class="block text-sm">New task</label>
+        <input x-model="form.title" required class="w-full p-2 border rounded" placeholder="e.g. Finish Signals assignment" />
+
+        <div class="grid grid-cols-2 gap-2">
+          <select x-model="form.priority" class="p-2 border rounded">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+          <input x-model="form.due" type="date" class="p-2 border rounded" />
+        </div>
+
+        <input x-model="form.tags" placeholder="tags comma-separated" class="w-full p-2 border rounded text-sm" />
+
+        <div class="flex gap-2">
+          <button type="submit" class="flex-1 px-3 py-2 bg-indigo-600 text-white rounded">Add Task</button>
+          <button type="button" @click="importSample()" class="px-3 py-2 border rounded">Sample</button>
+        </div>
+      </form>
+
+      <hr class="my-4" />
+
+      <div class="space-y-2 text-sm">
+        <label>Filters</label>
+        <input x-model="search" placeholder="Search tasks" class="w-full p-2 border rounded" />
+
+        <div class="flex gap-2 mt-2">
+          <select x-model="filter.priority" class="p-2 border rounded w-full">
+            <option value="">All priorities</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select x-model="filter.status" class="p-2 border rounded w-full">
+            <option value="">All</option>
+            <option value="active">Active</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+
+        <div class="mt-3 text-xs text-gray-500">
+          <p>Pro tips:</p>
+          <ul class="list-disc ml-4">
+            <li>Drag tasks to reorder</li>
+            <li>Use tags to group homework or projects</li>
+            <li>Analytics shows completion trends</li>
+          </ul>
+        </div>
+      </div>
+
+      <hr class="my-4" />
+
+      <div class="text-xs text-gray-600">
+        <strong>Storage:</strong> Offline (IndexedDB). Export/Import available.
+      </div>
+
+      <div class="mt-3 flex gap-2">
+        <button @click="exportJSON()" class="px-3 py-1 border rounded">Export</button>
+        <label class="px-3 py-1 border rounded cursor-pointer">
+          Import
+          <input type="file" @change="importJSON($event)" accept="application/json" class="hidden" />
+        </label>
+      </div>
+    </section>
+
+    <!-- Right: task list -->
+    <section class="md:col-span-2 bg-white p-4 rounded-lg shadow-sm">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold">Tasks</h2>
+        <div class="text-sm text-gray-500">{{ tasks.length }} total</div>
+      </div>
+
+      <ul id="taskList" class="space-y-2">
+        <template x-for="task in filteredTasks()" :key="task.id">
+          <li :class="{'opacity-60': task.done}" class="p-3 border rounded flex items-start gap-3 transition-transform transform task-enter-active">
+            <div class="drag-handle px-2 py-1 text-gray-400" title="Drag to reorder">☰</div>
+
+            <div class="flex-1">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <h3 class="font-medium" x-text="task.title"></h3>
+                  <div class="text-xs text-gray-500 mt-1">
+                    <span x-text="task.tags.join(', ')" class="mr-2"></span>
+                    <span x-text="task.priority" class="px-1 py-0.5 rounded text-white" :class="{'bg-red-500':task.priority=='high','bg-yellow-500':task.priority=='medium','bg-green-500':task.priority=='low'}"></span>
+                    <span x-text="task.due ? ' • due ' + formatDate(task.due) : ''" class="ml-2"></span>
+                  </div>
+                </div>
+
+                <div class="flex gap-2 items-center">
+                  <button @click="toggleDone(task.id)" class="px-2 py-1 border rounded">✓</button>
+                  <button @click="editTask(task.id)" class="px-2 py-1 border rounded">Edit</button>
+                  <button @click="deleteTask(task.id)" class="px-2 py-1 border rounded text-red-600">Del</button>
+                </div>
+              </div>
+
+              <div class="mt-2 text-xs text-gray-500">Created: <span x-text="formatDateTime(task.created)"></span></div>
+            </div>
+          </li>
+        </template>
+      </ul>
+
+      <div class="mt-4 text-sm text-gray-500">Double-click a task to toggle completion. Use the buttons to edit or delete.</div>
+    </section>
+  </main>
+
+  <!-- Analytics Modal -->
+  <div x-show="openStats" class="fixed inset-0 bg-black/40 flex items-center justify-center p-4" x-cloak>
+    <div @click.away="openStats=false" class="bg-white rounded-lg max-w-3xl w-full p-4 relative">
+      <button @click="openStats=false" class="absolute right-3 top-3">✕</button>
+      <h3 class="font-semibold mb-3">Analytics</h3>
+      <canvas id="completionChart" height="120"></canvas>
+      <div class="mt-3 text-sm text-gray-600">Completion rate and tasks by priority.</div>
+    </div>
+  </div>
+
+  <!-- Edit modal -->
+  <div x-show="editing" class="fixed inset-0 bg-black/40 flex items-center justify-center p-4" x-cloak>
+    <div @click.away="closeEdit()" class="bg-white rounded-lg max-w-lg w-full p-4">
+      <h3 class="font-semibold">Edit Task</h3>
+      <form @submit.prevent="saveEdit()" class="space-y-3 mt-3">
+        <input x-model="editForm.title" class="w-full p-2 border rounded" />
+        <div class="grid grid-cols-2 gap-2">
+          <select x-model="editForm.priority" class="p-2 border rounded">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+          <input x-model="editForm.due" type="date" class="p-2 border rounded" />
+        </div>
+        <input x-model="editForm.tagsRaw" class="w-full p-2 border rounded" />
+        <div class="flex gap-2 justify-end">
+          <button type="button" @click="closeEdit()" class="px-3 py-1 border rounded">Cancel</button>
+          <button type="submit" class="px-3 py-1 bg-indigo-600 text-white rounded">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    function todoApp(){
+      return {
+        // === configure your Google Form feedback URL here ===
+        feedbackUrl: 'https://forms.gle/vXzjK2Re35NVdbgc8',
+
+        tasks: [],
+        form: { title: '', priority: 'medium', due: '', tags: '' },
+        editForm: null,
+        editing: false,
+        search: '',
+        filter: { priority: '', status: '' },
+        openStats: false,
+        sortable: null,
+
+        async init(){
+          // init localForage
+          localforage.config({ name: 'AdvancedTodo', storeName: 'tasks' });
+
+          // load tasks (if none, make a sample)
+          const saved = await localforage.getItem('tasks');
+          this.tasks = saved || [];
+          if (!this.tasks.length) this.importSample();
+
+          // initialize Sortable
+          this.sortable = new Sortable(document.getElementById('taskList'), {
+            handle: '.drag-handle',
+            animation: 150,
+            onEnd: (evt) => {
+              const ids = Array.from(document.querySelectorAll('#taskList > li')).map(li => li.__x && li.__x.$data ? li.__x.$data.id : null).filter(Boolean);
+              // fallback: reorder using DOM order
+              const newOrder = [];
+              document.querySelectorAll('#taskList > li').forEach(li => {
+                const title = li.querySelector('h3')?.innerText;
+                const t = this.tasks.find(x=>x.title===title) || {};
+                if (t.id) newOrder.push(t);
+              });
+              if (newOrder.length) { this.tasks = newOrder; this.save(); }
+            }
+          });
+
+          // render chart when modal opens
+          this.$watch('openStats', val => { if(val) this.drawChart(); });
+        },
+
+        formatDate(d){ return d ? dateFns.format(new Date(d),'MMM d') : '' },
+        formatDateTime(d){ return d ? dateFns.format(new Date(d),'PP p') : '' },
+
+        async save(){ await localforage.setItem('tasks', this.tasks); },
+
+        addTask(){
+          const t = {
+            id: crypto.randomUUID(),
+            title: this.form.title.trim(),
+            priority: this.form.priority,
+            tags: this.form.tags ? this.form.tags.split(',').map(s=>s.trim()).filter(Boolean) : [],
+            due: this.form.due || null,
+            done: false,
+            created: new Date().toISOString()
+          };
+          this.tasks.unshift(t);
+          this.form.title=''; this.form.tags=''; this.form.due=''; this.form.priority='medium';
+          this.save();
+        },
+
+        toggleDone(id){
+          const t = this.tasks.find(x=>x.id===id); if(!t) return; t.done = !t.done; this.save();
+        },
+
+        editTask(id){
+          const t = this.tasks.find(x=>x.id===id); if(!t) return;
+          this.editForm = { id: t.id, title: t.title, priority: t.priority, due: t.due, tagsRaw: t.tags.join(', ') };
+          this.editing = true;
+        },
+        closeEdit(){ this.editForm=null; this.editing=false; },
+        saveEdit(){
+          const t = this.tasks.find(x=>x.id===this.editForm.id); if(!t) return;
+          t.title = this.editForm.title;
+          t.priority = this.editForm.priority;
+          t.due = this.editForm.due || null;
+          t.tags = this.editForm.tagsRaw ? this.editForm.tagsRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+          this.save(); this.closeEdit();
+        },
+
+        deleteTask(id){ this.tasks = this.tasks.filter(x=>x.id!==id); this.save(); },
+
+        filteredTasks(){
+          let res = this.tasks.slice();
+          if(this.search) res = res.filter(t=> t.title.toLowerCase().includes(this.search.toLowerCase()) || t.tags.join(' ').toLowerCase().includes(this.search.toLowerCase()));
+          if(this.filter.priority) res = res.filter(t=>t.priority===this.filter.priority);
+          if(this.filter.status) res = res.filter(t=> this.filter.status==='done' ? t.done : !t.done);
+          return res;
+        },
+
+        drawChart(){
+          const ctx = document.getElementById('completionChart').getContext('2d');
+          const total = this.tasks.length || 1;
+          const done = this.tasks.filter(t=>t.done).length;
+          const byPriority = ['high','medium','low'].map(p=> this.tasks.filter(t=>t.priority===p).length);
+
+          if(this._chart) this._chart.destroy();
+          this._chart = new Chart(ctx, {
+            type: 'doughnut',
+            data: { labels:['Done','Active'], datasets:[{ data:[done, total-done] }] },
+            options:{ responsive:true }
+          });
+        },
+
+        exportJSON(){
+          const blob = new Blob([JSON.stringify(this.tasks, null, 2)], {type:'application/json'});
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = 'tasks.json'; a.click(); URL.revokeObjectURL(url);
+        },
+        importJSON(e){
+          const f = e.target.files[0]; if(!f) return; const reader = new FileReader();
+          reader.onload = async () => { try { const parsed = JSON.parse(reader.result); if(Array.isArray(parsed)) { this.tasks = parsed; await this.save(); } else alert('Invalid JSON'); } catch(err){ alert('Error parsing'); } };
+          reader.readAsText(f);
+        },
+
+        importSample(){
+          this.tasks = [
+            { id: crypto.randomUUID(), title: 'Study Signals & Systems — chapter 3', priority:'high', tags:['study','signals'], due: null, done:false, created: new Date().toISOString() },
+            { id: crypto.randomUUID(), title: 'Gym — push day', priority:'medium', tags:['fitness'], due: null, done:false, created: new Date().toISOString() },
+            { id: crypto.randomUUID(), title: 'Start ML notebook for project', priority:'high', tags:['ml','project'], due: null, done:false, created: new Date().toISOString() }
+          ];
+          this.save();
+        },
+
+        toggleTheme(){
+          document.documentElement.classList.toggle('dark');
+          document.body.classList.toggle('bg-gray-900');
+        }
+      }
+    }
+  </script>
+</body>
+</html>
